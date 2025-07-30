@@ -1,0 +1,82 @@
+services:
+  kafka:
+    image: apache/kafka:4.0.0
+    container_name: kafka
+    ports:
+      - 9092:9092
+    environment:
+      # Configure listeners for both docker and host communication
+      KAFKA_LISTENERS: CONTROLLER://localhost:9091,HOST://0.0.0.0:9092,DOCKER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: HOST://localhost:9092,DOCKER://kafka:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,DOCKER:PLAINTEXT,HOST:PLAINTEXT
+      # Settings required for KRaft mode
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9091
+      # Listener to use for broker-to-broker communication
+      KAFKA_INTER_BROKER_LISTENER_NAME: DOCKER
+      # Required for a single node cluster
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    healthcheck:
+      test: /opt/kafka/bin/kafka-cluster.sh cluster-id --bootstrap-server kafka:9093 || exit 1
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    networks:
+      scala_network:
+        aliases:
+          - kafka
+
+  cassandra:
+    image: cassandra:5.0.4
+    ports:
+      - "9042:9042"
+    container_name: cassandra
+    healthcheck:
+      test: ["CMD", "cqlsh", "-u cassandra", "-p cassandra" ,"-e describe keyspaces"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    networks:
+      scala_network:
+        aliases:
+          - cassandra
+
+  init-cassandra:
+    image: cassandra:5.0.4
+    depends_on:
+      cassandra:
+        condition: service_healthy
+    restart: no
+    networks:
+      scala_network:
+        aliases:
+          - init-cassandra
+    volumes:
+      - "./cassandra:/docker-entrypoint-initdb.d"
+    command: /bin/bash -c "echo Loading cassandra keyspace && cqlsh cassandra -f /docker-entrypoint-initdb.d/dump.cql"
+
+  init-kafka:
+    image: apache/kafka:4.0.0
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: no
+    networks:
+      scala_network:
+        aliases:
+          - init-kafka
+    volumes:
+      - "./kafka/create-topics.sh:/tmp/create-topics.sh"
+      - "./kafka/player-data-full-2025-june_edited.csv:/tmp/player-data-full-2025-june_edited.csv"
+    entrypoint: [ '/bin/bash', '-c', '/tmp/create-topics.sh' ]
+
+networks:
+  scala_network:
+    name: scala_network
+    driver: bridge
+
+
+
+
